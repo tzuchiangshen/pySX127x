@@ -26,6 +26,7 @@ from time import sleep
 from SX127x.LoRa import *
 from SX127x.LoRaArgumentParser import LoRaArgumentParser
 from SX127x.board_config import BOARD
+import struct
 
 BOARD.setup()
 
@@ -38,27 +39,88 @@ class LoRaRcvCont(LoRa):
         self.set_mode(MODE.SLEEP)
         self.set_dio_mapping([0] * 6)
 
+    def print_buffer(self, buffer):
+       text = []
+       for c in buffer:
+          text.append(chr(c))
+       print(text)
+
+    def get_rpi_temp(self):
+       f = open("/sys/class/thermal/thermal_zone0/temp", "r")
+       line = int(f.read())
+       temp = int(line) / 1000.0
+       byte = struct.pack("!b", temp)
+       return byte
+
     def on_rx_done(self):
         BOARD.led_on()
         print("\nRxDone")
         print(self.get_irq_flags())
-        print(map(hex, self.read_payload(nocheck=True)))
+        #print(map(hex, self.read_payload(nocheck=True)))
+        _buff = self.read_payload(nocheck=True)
+        print("received:")
+        self.print_buffer(_buff)
+
+        # send pOnG + 2 bytes 
+        t = ord(self.get_rpi_temp())
+        _reply = [112, 79, 110, 71, 0, t]
+        #_buff = [0x70, 73]
+        print("to be replied:")
+        self.print_buffer(_reply)
+
         self.set_mode(MODE.SLEEP)
-        self.reset_ptr_rx()
-        BOARD.led_off()
-        self.set_mode(MODE.RXCONT)
+        self.set_dio_mapping([1,0,0,0,0,0])
+        
+        self.set_payload_length(6)
+        ret = self.write_payload(_reply)
+        print ("returned by SPI:")
+        self.print_buffer(ret)
+       
+        self.set_mode(MODE.TX)
+        print("reply sent")
+        #sleep(0.5)
+        
+        #self.set_mode(MODE.SLEEP)
+        #self.reset_ptr_rx()
+        #BOARD.led_off()
+        #self.set_mode(MODE.RXCONT)
 
     def on_tx_done(self):
         print("\nTxDone")
         print(self.get_irq_flags())
 
+        self.set_mode(MODE.SLEEP)
+        self.reset_ptr_rx()
+        BOARD.led_off()
+        self.set_dio_mapping([0] * 6)
+        self.set_mode(MODE.RXCONT)
+
     def on_cad_done(self):
         print("\non_CadDone")
         print(self.get_irq_flags())
+ 
+        self.clear_irq_flags()
+        print(self.get_irq_flags())
+
+        self.set_mode(MODE.SLEEP)
+        rssi_value = self.get_rssi_value()
+        status = self.get_modem_status()
+        sys.stdout.flush()
+	sys.stdout.write("\r%d %d %d %s" % (rssi_value, status['rx_ongoing'], status['modem_clear'], self))
+        
+        self.reset_ptr_rx()
+        BOARD.led_off()
+        self.set_dio_mapping([0] * 6)
+        self.set_mode(MODE.RXCONT)
+        print ("listo, saliendo de cad  ===========")
+
+
 
     def on_rx_timeout(self):
         print("\non_RxTimeout")
         print(self.get_irq_flags())
+        self.set_dio_mapping([0] * 6)
+        self.set_mode(MODE.RXCONT)
 
     def on_valid_header(self):
         print("\non_ValidHeader")
@@ -75,12 +137,20 @@ class LoRaRcvCont(LoRa):
     def start(self):
         self.reset_ptr_rx()
         self.set_mode(MODE.RXCONT)
+        i = 0
         while True:
             sleep(.5)
             rssi_value = self.get_rssi_value()
             status = self.get_modem_status()
             sys.stdout.flush()
             sys.stdout.write("\r%d %d %d" % (rssi_value, status['rx_ongoing'], status['modem_clear']))
+            i = i + 1 
+            #if(i % 20 == 0):
+            #    self.set_mode(MODE.SLEEP)
+            #    sys.stdout.flush()
+            #    sys.stdout.write("\r%d %d %d %s" % (rssi_value, status['rx_ongoing'], status['modem_clear'], self))
+            #    self.set_mode(MODE.RXCONT)
+                 
 
 
 lora = LoRaRcvCont(verbose=False)
